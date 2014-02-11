@@ -6,8 +6,8 @@
 #include <string.h>
 
 //Include network stuff
-#include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netdb.h>
@@ -44,6 +44,7 @@ int status;
 struct addrinfo host_info;
 struct addrinfo *host_info_list;
 int socketDesc;
+struct sockaddr_in returnSocketDesc;
 pollfd pfd;
 char* incomingBuffer;
 
@@ -169,7 +170,12 @@ void setupConnection()
 	fprintf(stdout, "\nBind result: %d \n", status);
 	fflush(stdout);
 
+	socklen_t socklen = (socklen_t)sizeof(sockaddr);
 
+	recvfrom(socketDesc, &incomingBuffer, 255, 0, (sockaddr*)&returnSocketDesc, &socklen); 
+	
+//	fprintf(stdout, "\nClient connected: %s %s ", returnSocketDesc.sin_addr.s_addr, returnSocketDesc.sin_port);
+	fprintf(stdout, "\nClient connected ");
 }
 
 
@@ -186,12 +192,15 @@ receiveType checkIncomingStream()
 	{
 		int size = 	recv(socketDesc, &incomingBuffer, 255, 0);
 		fprintf(stdout, "\n\nData received: %d \n%s\n\n", size, &incomingBuffer);
+		fflush(stdout);
 
 		char* msg = (char*)malloc(sizeof(char) * 7);
-		sprintf(msg, "Return");	
+		sprintf(msg, "Return message");	
 		int len = strlen(msg);
-		send(socketDesc, msg, len, 0);
-
+//		sendto(socketDesc, msg, len, 0, returnSocketDesc, sizeof(SOCKADDR_IN));
+		sendto(socketDesc, msg, len, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+fprintf(stdout, "\nSend msg: %s ", msg);
+fflush(stdout);
 
 	}
 
