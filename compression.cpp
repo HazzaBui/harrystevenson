@@ -6,8 +6,8 @@
 #include <string.h>
 
 //#include <png.h>
-#include "lodepng.h"
-#include "lzfx.h"
+//#include "lodepng.h"
+//#include "lzfx.h"
 #include "lzfP.h"
 
 //Include network stuff
