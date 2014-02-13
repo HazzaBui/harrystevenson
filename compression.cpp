@@ -5,6 +5,11 @@
 #include "types.h"
 #include <string.h>
 
+//#include <png.h>
+#include "lodepng.h"
+#include "lzfx.h"
+#include "lzfP.h"
+
 //Include network stuff
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -28,10 +33,11 @@ void sendKeyframe();
 receiveType checkIncomingStream();
 void initialiseVars();
 void parseArgs(int argc, char* argv[]);
+receiveType translateReceiveType(char c);
 
 //Application vars
-char* prevImage;
-char* curImage;
+unsigned char* prevImage;
+unsigned char* curImage;
 moveVector** moveVecs;
 int numOfSamples;
 int vectorCount;
@@ -47,30 +53,38 @@ int socketDesc;
 struct sockaddr_in returnSocketDesc;
 pollfd pfd;
 char* incomingBuffer;
+char* sendBuffer;
+unsigned int sendBufferLength;
+char* sendTypeBuffer;
+unsigned int sendTypeBufferLength;
+size_t sendSize;
 
 
 int main(int argc, char* argv[])
 {
-		fprintf(stdout, "\nStart");
+	fprintf(stdout, "\nStart");
 	receiveType rt;
 	bool loop = true;
 	
 	parseArgs(argc, argv);
 	initialiseVars();
 	setupConnection();
-	fflush(stdout);
+
+	sendKeyframe();
+
+	fprintf(stdout, "\nBeginning loop ");
+fflush(stdout);
 
 	//Use 'loop' to maintain gameloop
 	//Perform all compression/communication here
 	while(loop)
 	{
-		//fprintf(stdout, "\nlooping");
-	
 		rt = checkIncomingStream();
 
 		switch(rt)
 		{
 			case KEYFRAMESEND:
+				sendKeyframe();
 				//Send keyframe
 			break;
 			case CLOSECONNECTION:
@@ -95,8 +109,10 @@ void initialiseVars()
 
 	fprintf(stdout, "\nInitial alloc");
 	//allocate mem for current and previous image
-	prevImage = (char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
-	curImage = (char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
+	prevImage = (unsigned char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
+	curImage = (unsigned char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
+
+	fprintf(stdout, "\nImage size: %d ", WIDTH * HEIGHT * 3);
 
 	//Create in shared memory only need current in shared, previous saved locally
 	//Should this be done in image capture?
@@ -116,6 +132,14 @@ void initialiseVars()
 	//Network receive buffer
 	incomingBuffer = (char*)malloc(sizeof(char) * 255);
 
+	sendBuffer = (char*)malloc(sizeof(char)* WIDTH * HEIGHT * 3);
+	sendBufferLength = WIDTH * HEIGHT * 3;
+
+	sendTypeBuffer = (char*)malloc(sizeof(char)* 15);
+	sendTypeBufferLength = 15;
+
+	fprintf(stdout, "\nFinished initialise");
+	fflush(stdout);
 }
 
 void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY)
@@ -152,7 +176,7 @@ void setupConnection()
 	//send stream header - sh*
 	int optval = 1;
 
-	memset(&host_info, 0, sizeof(host_info));
+	memset(&host_info, 0, sizeof(addrinfo));
 	host_info.ai_family = AF_UNSPEC;
 	host_info.ai_socktype = SOCK_DGRAM;
 	host_info.ai_flags = AI_PASSIVE;
@@ -172,7 +196,7 @@ void setupConnection()
 
 	socklen_t socklen = (socklen_t)sizeof(sockaddr);
 
-	recvfrom(socketDesc, &incomingBuffer, 255, 0, (sockaddr*)&returnSocketDesc, &socklen); 
+	recvfrom(socketDesc, incomingBuffer, 255, 0, (sockaddr*)&returnSocketDesc, &socklen); 
 	
 //	fprintf(stdout, "\nClient connected: %s %s ", returnSocketDesc.sin_addr.s_addr, returnSocketDesc.sin_port);
 	fprintf(stdout, "\nClient connected ");
@@ -181,30 +205,60 @@ void setupConnection()
 
 void sendKeyframe()
 {
-	//loseless compress and send full keyframe
+/*	//loseless compress and send full keyframe
 	//no vectors, delta etc
+	unsigned error = lodepng_encode32(&sendBuffer, &sendSize, curImage, WIDTH, HEIGHT);
+
+	fprintf(stdout, "\nImage size: %d ", sendSize);
+
+	char* obuf = (char*)malloc(sizeof(char)* WIDTH * HEIGHT * 3);
+	unsigned int* olen;
+	int error = lzfx_compress(curImage, WIDTH * HEIGHT * 3, obuf, olen); 
+	
+	fprintf(stdout, "\nError: %d\nsize: %d ", error, &olen);
+*/
+fprintf(stdout, "\nSendFrame");
+
+	unsigned int length = lzf_compress(curImage, WIDTH * HEIGHT * 3, sendBuffer, sendBufferLength); 
+
+	if(length > 0)
+	{
+		sendTypeBuffer[0] = (char)KEYFRAME;
+		sprintf(sendTypeBuffer + 1, "%d\n", length);
+		sendto(socketDesc, sendTypeBuffer, sendTypeBufferLength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+		sendto(socketDesc, sendBuffer, sendBufferLength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+		fprintf(stdout, "\nSent data stream ");
+	}
+
+	fprintf(stdout, "\nError: %d\nsize: %d ", length, sendBufferLength);
 }
 
 //Check the stream for connection close, resend etc
 receiveType checkIncomingStream()
 {
+	receiveType rt = EMPTY;
+
 	if(poll(&pfd, 1, 1) != 0)
 	{
-		int size = 	recv(socketDesc, &incomingBuffer, 255, 0);
-		fprintf(stdout, "\n\nData received: %d \n%s\n\n", size, &incomingBuffer);
+		int size = 	recv(socketDesc, incomingBuffer, 255, 0);
+		fprintf(stdout, "\n\nData received: %d \n%s end\n\n", size, incomingBuffer);
 		fflush(stdout);
 
-		char* msg = (char*)malloc(sizeof(char) * 7);
-		sprintf(msg, "Return message");	
-		int len = strlen(msg);
+//		char* msg = (char*)malloc(sizeof(char) * 7);
+//		sprintf(msg, "Return message");	
+//		int len = strlen(msg);
 //		sendto(socketDesc, msg, len, 0, returnSocketDesc, sizeof(SOCKADDR_IN));
-		sendto(socketDesc, msg, len, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
-fprintf(stdout, "\nSend msg: %s ", msg);
-fflush(stdout);
+		//sendto(socketDesc, msg, len, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+//fprintf(stdout, "\nSend msg: %s ", msg);
+//fflush(stdout);
+		if(size > 0)
+		{
+			rt = translateReceiveType(incomingBuffer[0]);	
+		}
 
 	}
 
-	return EMPTY;
+	return rt;
 }
 
 void parseArgs(int argc, char* argv[])
@@ -219,5 +273,24 @@ void parseArgs(int argc, char* argv[])
 		}
 		//Add additional opts here as above
 	}
+
+}
+
+receiveType translateReceiveType(char c)
+{
+	fprintf(stdout, "\nTranslating: %d ", c);
+	switch(c)
+	{
+		case '0':
+			return KEYFRAMESEND;
+		break;
+		case '1':
+			return CLOSECONNECTION;
+		break;
+		case '2':
+			return EMPTY;
+		break;
+	}
+return EMPTY;
 
 }
