@@ -44,6 +44,7 @@ enum sendType
 	HEADER = 0,
 	PREDICTIONFRAME = 1,
 	KEYFRAME = 2,
+	CONNECTOK = 3,
 };
 
 /*
