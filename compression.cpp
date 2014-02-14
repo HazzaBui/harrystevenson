@@ -111,6 +111,25 @@ void initialiseVars()
 	//allocate mem for current and previous image
 	prevImage = (unsigned char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
 	curImage = (unsigned char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
+	
+	for(int i = 0; i < WIDTH * HEIGHT * 3; i++)
+	{
+		if(i < WIDTH * HEIGHT)
+			curImage[i] = 0;
+		else if( i < WIDTH * HEIGHT * 2)
+			curImage[i] = 127;
+		else
+			curImage[i] = 254;
+		
+		if(i % 3 == 0)
+			curImage[i] = 0;
+		else if( i % 3 == 1)
+			curImage[i] = 128;
+		else
+			curImage[i] = 255;
+
+	}
+
 
 	fprintf(stdout, "\nImage size: %d ", WIDTH * HEIGHT * 3);
 
@@ -197,6 +216,11 @@ void setupConnection()
 	socklen_t socklen = (socklen_t)sizeof(sockaddr);
 
 	recvfrom(socketDesc, incomingBuffer, 255, 0, (sockaddr*)&returnSocketDesc, &socklen); 
+
+	//Respond to ok the 'connection'
+	sendTypeBuffer[0] = (char)CONNECTOK;
+	sendto(socketDesc, sendTypeBuffer, 1, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+	
 	
 //	fprintf(stdout, "\nClient connected: %s %s ", returnSocketDesc.sin_addr.s_addr, returnSocketDesc.sin_port);
 	fprintf(stdout, "\nClient connected ");
@@ -223,14 +247,16 @@ fprintf(stdout, "\nSendFrame");
 
 	if(length > 0)
 	{
-		sendTypeBuffer[0] = (char)KEYFRAME;
-		sprintf(sendTypeBuffer + 1, "%d\n", length);
+//		sendTypeBuffer[0] = (char)KEYFRAME;
+		sprintf(sendTypeBuffer, "%d%d%c", (char)KEYFRAME, length, '\0');
+		fprintf(stdout, "\nSending : %s", sendTypeBuffer);
 		sendto(socketDesc, sendTypeBuffer, sendTypeBufferLength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
-		sendto(socketDesc, sendBuffer, sendBufferLength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
-		fprintf(stdout, "\nSent data stream ");
+		fprintf(stdout, "\nSent stream1 \nStream 2 size: %d\n", length);
+		sendto(socketDesc, sendBuffer, length, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+		fprintf(stdout, "\nSent stream2 ");
 	}
 
-	fprintf(stdout, "\nError: %d\nsize: %d ", length, sendBufferLength);
+//	fprintf(stdout, "\nError: %d\nsize: %d ", length, sendBufferLength);
 }
 
 //Check the stream for connection close, resend etc
