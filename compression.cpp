@@ -4,11 +4,18 @@
 #include <stdio.h>
 #include "types.h"
 #include <string.h>
+#include <math.h>
 
 //#include <png.h>
 //#include "lodepng.h"
 //#include "lzfx.h"
 #include "lzfP.h"
+
+//Include graphics stuff
+#include <linux/fb.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 
 //Include network stuff
 #include <sys/types.h>
@@ -23,6 +30,7 @@
 #define HEIGHT 480
 #define SAMPLESIZEX 20
 #define SAMPLESIZEY 20
+#define TRANSMISSIONSIZE 512
 
 //Signatures
 void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY);
@@ -34,10 +42,14 @@ receiveType checkIncomingStream();
 void initialiseVars();
 void parseArgs(int argc, char* argv[]);
 receiveType translateReceiveType(char c);
+void sendCharStream(char *stream, unsigned int streamSize);
 
 //Application vars
-unsigned char* prevImage;
-unsigned char* curImage;
+int fbfd;
+char *fbp;
+struct fb_fix_screeninfo sinfo;
+char* prevImage;
+char* curImage;
 moveVector** moveVecs;
 int numOfSamples;
 int vectorCount;
@@ -70,7 +82,7 @@ int main(int argc, char* argv[])
 	initialiseVars();
 	setupConnection();
 
-	sendKeyframe();
+//	sendKeyframe();
 
 	fprintf(stdout, "\nBeginning loop ");
 fflush(stdout);
@@ -103,33 +115,35 @@ fflush(stdout);
 
 void initialiseVars()
 {
+	fbfd = open("/dev/fb0", O_RDWR);
+	ioctl(fbfd, FBIOGET_FSCREENINFO, &sinfo);
+	long int framebuffersize = sinfo.smem_len;
+	fbp = (char*)mmap(0, framebuffersize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+
+
 	sh = new streamHeader(WIDTH, HEIGHT, SAMPLESIZEX, SAMPLESIZEY);
 
 	numOfSamples = (SAMPLESIZEX * SAMPLESIZEY) / 100;
 
 	fprintf(stdout, "\nInitial alloc");
 	//allocate mem for current and previous image
-	prevImage = (unsigned char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
-	curImage = (unsigned char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
-	
+	prevImage = (char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
+//	curImage = (char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
+	curImage = fbp;
+	bool tempor = false;
+/*	
 	for(int i = 0; i < WIDTH * HEIGHT * 3; i++)
 	{
-		if(i < WIDTH * HEIGHT)
-			curImage[i] = 0;
-		else if( i < WIDTH * HEIGHT * 2)
-			curImage[i] = 127;
-		else
-			curImage[i] = 254;
-		
-		if(i % 3 == 0)
-			curImage[i] = 0;
-		else if( i % 3 == 1)
-			curImage[i] = 128;
-		else
-			curImage[i] = 255;
+		curImage[i] = fbp[i];
+//		curImage[i] = 128;
+		if(tempor == false && fbp[i] != 0)
+		{
+			fprintf(stdout, "\nnum:%d:pos:%d:", fbp[i], i);
+			tempor = true;
+		}
 
 	}
-
+*/
 
 	fprintf(stdout, "\nImage size: %d ", WIDTH * HEIGHT * 3);
 
@@ -154,8 +168,8 @@ void initialiseVars()
 	sendBuffer = (char*)malloc(sizeof(char)* WIDTH * HEIGHT * 3);
 	sendBufferLength = WIDTH * HEIGHT * 3;
 
-	sendTypeBuffer = (char*)malloc(sizeof(char)* 15);
-	sendTypeBufferLength = 15;
+	sendTypeBuffer = (char*)malloc(sizeof(char)* 40);
+	sendTypeBufferLength = 40;
 
 	fprintf(stdout, "\nFinished initialise");
 	fflush(stdout);
@@ -220,6 +234,12 @@ void setupConnection()
 	//Respond to ok the 'connection'
 	sendTypeBuffer[0] = (char)CONNECTOK;
 	sendto(socketDesc, sendTypeBuffer, 1, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+
+	//Send stream header
+	sprintf(sendTypeBuffer, "%d\n%d\n%d\n%d\n", sh->imageSizeX, sh->imageSizeY, sh->sampleSizeX, sh->sampleSizeY);
+	fprintf(stdout, "\nSending stream header: %s", sendTypeBuffer);
+		sendto(socketDesc, sendTypeBuffer, sendTypeBufferLength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+	
 	
 	
 //	fprintf(stdout, "\nClient connected: %s %s ", returnSocketDesc.sin_addr.s_addr, returnSocketDesc.sin_port);
@@ -241,7 +261,7 @@ void sendKeyframe()
 	
 	fprintf(stdout, "\nError: %d\nsize: %d ", error, &olen);
 */
-fprintf(stdout, "\nSendFrame");
+fprintf(stdout, "\nSendKeyFrame");
 
 	unsigned int length = lzf_compress(curImage, WIDTH * HEIGHT * 3, sendBuffer, sendBufferLength); 
 
@@ -249,11 +269,12 @@ fprintf(stdout, "\nSendFrame");
 	{
 //		sendTypeBuffer[0] = (char)KEYFRAME;
 		sprintf(sendTypeBuffer, "%d%d%c", (char)KEYFRAME, length, '\0');
-		fprintf(stdout, "\nSending : %s", sendTypeBuffer);
+		fprintf(stdout, "\nSending header: %s", sendTypeBuffer);
 		sendto(socketDesc, sendTypeBuffer, sendTypeBufferLength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
-		fprintf(stdout, "\nSent stream1 \nStream 2 size: %d\n", length);
-		sendto(socketDesc, sendBuffer, length, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
-		fprintf(stdout, "\nSent stream2 ");
+//		fprintf(stdout, "\nSending stream, size: %d\n", length);
+		sendCharStream(sendBuffer, length);
+//		sendto(socketDesc, sendBuffer, length, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+		fprintf(stdout, "\nSent stream ");
 	}
 
 //	fprintf(stdout, "\nError: %d\nsize: %d ", length, sendBufferLength);
@@ -317,6 +338,36 @@ receiveType translateReceiveType(char c)
 			return EMPTY;
 		break;
 	}
-return EMPTY;
+	return EMPTY;
+
+}
+
+
+void sendCharStream(char *stream, unsigned int streamSize)
+{
+
+//	fprintf(stdout, "\nSending stream\n");
+
+	float numOfTransF = streamSize / TRANSMISSIONSIZE;
+	unsigned int numberOfTransmissions = (int)ceil(numOfTransF);
+
+	char *streampospoint = stream;
+	long int streampos = 0;
+	int sendlength;
+
+	char *datastream = (char*)malloc(sizeof(char)*15);
+	sprintf(datastream, "%d\0", numberOfTransmissions);
+	sendto(socketDesc, datastream, 15, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+	
+//	fprintf(stdout, "\nSending %d chunks", numberOfTransmissions);
+
+	for(int i = 0; i < numberOfTransmissions; i++)
+	{
+		streampos += TRANSMISSIONSIZE;
+		sendlength = streampos > streamSize ? streampos - streamSize : TRANSMISSIONSIZE; 
+		sendto(socketDesc, streampospoint, sendlength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+		streampospoint += TRANSMISSIONSIZE;
+	}
+free(datastream);
 
 }
