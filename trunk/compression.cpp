@@ -6,6 +6,7 @@
 #include <string.h>
 #include <math.h>
 #include <unistd.h>
+#include <stdint.h>
 
 //#include <png.h>
 //#include "lodepng.h"
@@ -32,6 +33,7 @@
 #define SAMPLESIZEX 20
 #define SAMPLESIZEY 20
 #define TRANSMISSIONSIZE 484 //- 28 bytes ip/udp header 
+#define STREAMHEADEROFFSET 4
 
 //Signatures
 void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY);
@@ -43,7 +45,7 @@ receiveType checkIncomingStream();
 void initialiseVars();
 void parseArgs(int argc, char* argv[]);
 receiveType translateReceiveType(char c);
-void sendCharStream(char *stream, unsigned int streamSize);
+void sendCharStream(char *stream, int32_t streamSize, char sendType);
 
 //Application vars
 int fbfd;
@@ -167,8 +169,8 @@ void initialiseVars()
 	incomingBuffer = (char*)malloc(sizeof(char) * 255);
 	
 	//Add 2 initial bytes for UDP packet pos, then advance pointer 2
-	sendBuffer = (char*)malloc((sizeof(char)* WIDTH * HEIGHT * 3) + sizeof(char)*2);  
-	sendBuffer += 2;
+	sendBuffer = (char*)malloc((sizeof(char)* WIDTH * HEIGHT * 3) + sizeof(char)*STREAMHEADEROFFSET);  
+	sendBuffer += STREAMHEADEROFFSET;
 	sendBufferLength = WIDTH * HEIGHT * 3;
 
 	sendTypeBuffer = (char*)malloc(sizeof(char)* 40);
@@ -271,11 +273,11 @@ fprintf(stdout, "\nSendKeyFrame");
 	if(length > 0)
 	{
 //		sendTypeBuffer[0] = (char)KEYFRAME;
-		sprintf(sendTypeBuffer, "%d%d%c", (char)KEYFRAME, length, '\0');
-		fprintf(stdout, "\nSending header: %s", sendTypeBuffer);
-		sendto(socketDesc, sendTypeBuffer, sendTypeBufferLength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
+//		sprintf(sendTypeBuffer, "%d%d%d%c", (char)HEADER, (char)KEYFRAME, length, '\0');
+//		fprintf(stdout, "\nSending header: %s", sendTypeBuffer);
+//		sendto(socketDesc, sendTypeBuffer, sendTypeBufferLength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
 //		fprintf(stdout, "\nSending stream, size: %d\n", length);
-		sendCharStream(sendBuffer, length);
+		sendCharStream(sendBuffer, length, (char)KEYFRAME);
 //		sendto(socketDesc, sendBuffer, length, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
 		fprintf(stdout, "\nSent stream ");
 	}
@@ -346,38 +348,54 @@ receiveType translateReceiveType(char c)
 }
 
 
-void sendCharStream(char *stream, unsigned int streamSize)
+void sendCharStream(char *stream, int32_t streamSize, char sendType)
 {
+	static unsigned char sendID = 0;
+	if(sendID == 254)
+		sendID = 0;
+	sendID++;
 
 //	fprintf(stdout, "\nSending stream\n");
 
 	float numOfTransF = (float)streamSize / (float)(TRANSMISSIONSIZE - 2); // include frame order
 	unsigned int numberOfTransmissions = (int)ceil(numOfTransF);
 
-	char *streampospoint = stream - 2;
+	char *streampospoint = stream - STREAMHEADEROFFSET;
 	long int streampos = 0;
 	int sendlength;
 	int packetSent;
+	int sleepTimer = 25000 / numberOfTransmissions; //25ms split for each transmission	
 
 	char *datastream = (char*)malloc(sizeof(char)*15);
-	sprintf(datastream, "%d\0", numberOfTransmissions);
+	//sprintf(datastream, "%d%d%d%d%c", (char)HEADER, (char)KEYFRAME, sendID, (uint32_t)streamSize, '\0');
+
+	char header = (char)HEADER;
+	memcpy(datastream, &header, sizeof(char));
+	memcpy(datastream+1, &sendType, sizeof(char));
+	memcpy(datastream+2, &sendID, sizeof(char));
+	memcpy(datastream+3, &streamSize, sizeof(uint32_t));
+
+
+//	memcpy(streampospoint+1, &sendID, sizeof(char));
+//	memcpy(streampospoint+2, &i, sizeof(short int));
+//	sprintf(datastream, "%d\0", numberOfTransmissions);
 	sendto(socketDesc, datastream, 15, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
 	
-	fprintf(stdout, "\nSending %d chunks\n", numberOfTransmissions);
+	fprintf(stdout, "\nSending %d chunks\nStreamsize: %d\nSleep timer: %d\n", numberOfTransmissions, streamSize, sleepTimer);
+
 
 	for(short int i = 0; i < numberOfTransmissions; i++)
 	{
-		if(i % 5 == 0)
-		{
-			fprintf(stdout,"\nSleep");
-			usleep(750);
-		}
-			
-		memcpy(streampospoint, &i, sizeof(short int));
-		sendlength = streamSize - streampos > TRANSMISSIONSIZE - 2 ? TRANSMISSIONSIZE : streamSize - streampos + 2; 
-		streampos += sendlength - 2;
+		usleep(sleepTimer);
+//		usleep(1000);
+		
+		memcpy(streampospoint, &sendType, sizeof(char));
+		memcpy(streampospoint+1, &sendID, sizeof(char));
+		memcpy(streampospoint+2, &i, sizeof(short int));
+		sendlength = streamSize - streampos > TRANSMISSIONSIZE - STREAMHEADEROFFSET ? TRANSMISSIONSIZE : streamSize - streampos + STREAMHEADEROFFSET; 
+		streampos += sendlength - STREAMHEADEROFFSET;
 		packetSent = sendto(socketDesc, streampospoint, sendlength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
-		streampospoint += TRANSMISSIONSIZE - 2;
+		streampospoint += TRANSMISSIONSIZE - STREAMHEADEROFFSET;
 	}
 
 	free(datastream);
