@@ -7,6 +7,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <time.h>
 
 //#include <png.h>
 //#include "lodepng.h"
@@ -34,6 +35,7 @@
 #define SAMPLESIZEY 20
 #define TRANSMISSIONSIZE 484 //- 28 bytes ip/udp header 
 #define STREAMHEADEROFFSET 4
+#define LOOPTIMEMS 200
 
 //Signatures
 void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY);
@@ -77,6 +79,10 @@ size_t sendSize;
 
 int main(int argc, char* argv[])
 {
+	struct timespec loopTimer;
+	long timeElapsed = 0;
+	long sleepTime;
+
 	fprintf(stdout, "\nStart");
 	receiveType rt;
 	bool loop = true;
@@ -94,6 +100,9 @@ fflush(stdout);
 	//Perform all compression/communication here
 	while(loop)
 	{
+		clock_gettime(CLOCK_MONOTONIC, &loopTimer);
+		timeElapsed = loopTimer.tv_nsec;
+
 		rt = checkIncomingStream();
 
 		switch(rt)
@@ -104,13 +113,24 @@ fflush(stdout);
 			break;
 			case CLOSECONNECTION:
 				//close down connection and cleanup
+				fprintf(stdout, "\nClose Connection Received\n");
 				loop = false;
 			break;
 			default:
+				sendKeyframe();
 				//continue standard, send p/k depending on loop iteration
 
 			break;
 		}
+		clock_gettime(CLOCK_MONOTONIC, &loopTimer);
+		timeElapsed = loopTimer.tv_nsec - timeElapsed;
+		timeElapsed = timeElapsed < 0 ? timeElapsed += 1000000000 : timeElapsed;
+		sleepTime = LOOPTIMEMS - (timeElapsed / 1000000) > 0 ? LOOPTIMEMS - (timeElapsed / 1000000) : 0;
+
+		fprintf(stdout, "\ndebug timecheck %d - %d = %d ns\n\n", LOOPTIMEMS, (timeElapsed / 1000000),  LOOPTIMEMS - (timeElapsed / 1000000));
+//		fprintf(stdout, "\nSleeping %d ms\n\n", sleepTime);
+		
+		usleep(sleepTime * 1000);
 	}
 	
 	//cleanup, run any post process, inform game application etc
@@ -266,7 +286,7 @@ void sendKeyframe()
 	
 	fprintf(stdout, "\nError: %d\nsize: %d ", error, &olen);
 */
-fprintf(stdout, "\nSendKeyFrame");
+//fprintf(stdout, "\nSendKeyFrame");
 
 	unsigned int length = lzf_compress(curImage, WIDTH * HEIGHT * 3, sendBuffer, sendBufferLength); 
 
@@ -279,7 +299,7 @@ fprintf(stdout, "\nSendKeyFrame");
 //		fprintf(stdout, "\nSending stream, size: %d\n", length);
 		sendCharStream(sendBuffer, length, (char)KEYFRAME);
 //		sendto(socketDesc, sendBuffer, length, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
-		fprintf(stdout, "\nSent stream ");
+//		fprintf(stdout, "\nSent stream ");
 	}
 
 //	fprintf(stdout, "\nError: %d\nsize: %d ", length, sendBufferLength);
@@ -333,13 +353,16 @@ receiveType translateReceiveType(char c)
 	fprintf(stdout, "\nTranslating: %d ", c);
 	switch(c)
 	{
-		case '0':
+		case 0:
+	fprintf(stdout, ": KEYFRAMESEND\n");
 			return KEYFRAMESEND;
 		break;
-		case '1':
+		case 1:
+	fprintf(stdout, ": CLOSECONNECTION\n");
 			return CLOSECONNECTION;
 		break;
-		case '2':
+		case 2:
+	fprintf(stdout, ": EMPTY\n");
 			return EMPTY;
 		break;
 	}
@@ -381,12 +404,12 @@ void sendCharStream(char *stream, int32_t streamSize, char sendType)
 //	sprintf(datastream, "%d\0", numberOfTransmissions);
 	sendto(socketDesc, datastream, 15, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
 	
-	fprintf(stdout, "\nSending %d chunks\nStreamsize: %d\nSleep timer: %d\n", numberOfTransmissions, streamSize, sleepTimer);
+//	fprintf(stdout, "\nSending %d chunks\nStreamsize: %d\nSleep timer: %d\n", numberOfTransmissions, streamSize, sleepTimer);
 
 
 	for(short int i = 0; i < numberOfTransmissions; i++)
 	{
-		usleep(sleepTimer);
+//		usleep(sleepTimer);
 //		usleep(1000);
 		
 		memcpy(streampospoint, &sendType, sizeof(char));
