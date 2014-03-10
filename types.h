@@ -36,6 +36,8 @@ enum receiveType
 	KEYFRAMESEND = 0,
 	CLOSECONNECTION = 1,
 	EMPTY = 2,
+	NEWKEYSTATE = 3,
+	KEYBOARDUPDATE = 4,
 };
 
 //Data types to send

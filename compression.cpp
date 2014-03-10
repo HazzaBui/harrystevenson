@@ -35,7 +35,8 @@
 #define SAMPLESIZEY 20
 #define TRANSMISSIONSIZE 484 //- 28 bytes ip/udp header 
 #define STREAMHEADEROFFSET 4
-#define LOOPTIMEMS 200
+#define LOOPTIMEMS 500
+#define FRAMESENDTIMER 500
 
 //Signatures
 void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY);
@@ -81,7 +82,7 @@ int main(int argc, char* argv[])
 {
 	struct timespec loopTimer;
 	long timeElapsed = 0;
-	long sleepTime;
+	long sleepTime = 0;
 
 	fprintf(stdout, "\nStart");
 	receiveType rt;
@@ -109,6 +110,7 @@ fflush(stdout);
 		{
 			case KEYFRAMESEND:
 				sendKeyframe();
+				sleepTime = 0;
 				//Send keyframe
 			break;
 			case CLOSECONNECTION:
@@ -116,21 +118,27 @@ fflush(stdout);
 				fprintf(stdout, "\nClose Connection Received\n");
 				loop = false;
 			break;
-			default:
-				sendKeyframe();
-				//continue standard, send p/k depending on loop iteration
-
-			break;
 		}
+
+		//Send keyframe every time timer reaches send threshold
+		if(sleepTime > FRAMESENDTIMER)
+		{
+	//		fprintf(stdout, "\nSending keyframe");
+			sendKeyframe();
+			sleepTime -= FRAMESENDTIMER;
+		}
+		else
+		{
+			//Else send p frame
+		}
+
+		//Update send timer
 		clock_gettime(CLOCK_MONOTONIC, &loopTimer);
 		timeElapsed = loopTimer.tv_nsec - timeElapsed;
 		timeElapsed = timeElapsed < 0 ? timeElapsed += 1000000000 : timeElapsed;
-		sleepTime = LOOPTIMEMS - (timeElapsed / 1000000) > 0 ? LOOPTIMEMS - (timeElapsed / 1000000) : 0;
+		sleepTime += timeElapsed * 1000000;
 
-		fprintf(stdout, "\ndebug timecheck %d - %d = %d ns\n\n", LOOPTIMEMS, (timeElapsed / 1000000),  LOOPTIMEMS - (timeElapsed / 1000000));
-//		fprintf(stdout, "\nSleeping %d ms\n\n", sleepTime);
-		
-		usleep(sleepTime * 1000);
+//		sleepTime = LOOPTIMEMS - (timeElapsed / 1000000) > 0 ? LOOPTIMEMS - (timeElapsed / 1000000) : 0;
 	}
 	
 	//cleanup, run any post process, inform game application etc
@@ -186,7 +194,7 @@ void initialiseVars()
 	fprintf(stdout, "\nCreated");
 
 	//Network receive buffer
-	incomingBuffer = (char*)malloc(sizeof(char) * 255);
+	incomingBuffer = (char*)malloc(sizeof(char) * TRANSMISSIONSIZE);
 	
 	//Add 2 initial bytes for UDP packet pos, then advance pointer 2
 	sendBuffer = (char*)malloc((sizeof(char)* WIDTH * HEIGHT * 3) + sizeof(char)*STREAMHEADEROFFSET);  
@@ -254,7 +262,7 @@ void setupConnection()
 
 	socklen_t socklen = (socklen_t)sizeof(sockaddr);
 
-	recvfrom(socketDesc, incomingBuffer, 255, 0, (sockaddr*)&returnSocketDesc, &socklen); 
+	recvfrom(socketDesc, incomingBuffer, TRANSMISSIONSIZE, 0, (sockaddr*)&returnSocketDesc, &socklen); 
 
 	//Respond to ok the 'connection'
 	sendTypeBuffer[0] = (char)CONNECTOK;
@@ -312,7 +320,7 @@ receiveType checkIncomingStream()
 
 	if(poll(&pfd, 1, 1) != 0)
 	{
-		int size = 	recv(socketDesc, incomingBuffer, 255, 0);
+		int size = 	recv(socketDesc, incomingBuffer, TRANSMISSIONSIZE, 0);
 		fprintf(stdout, "\n\nData received: %d \n%s end\n\n", size, incomingBuffer);
 		fflush(stdout);
 
@@ -354,17 +362,26 @@ receiveType translateReceiveType(char c)
 	switch(c)
 	{
 		case 0:
-	fprintf(stdout, ": KEYFRAMESEND\n");
+	fprintf(stdout, " KEYFRAMESEND\n");
 			return KEYFRAMESEND;
 		break;
 		case 1:
-	fprintf(stdout, ": CLOSECONNECTION\n");
+	fprintf(stdout, " CLOSECONNECTION\n");
 			return CLOSECONNECTION;
 		break;
 		case 2:
-	fprintf(stdout, ": EMPTY\n");
+	fprintf(stdout, " EMPTY\n");
 			return EMPTY;
 		break;
+		case 3:
+	fprintf(stdout, " NEWKEYSTATE\n");
+			return NEWKEYSTATE;
+		break;
+		case 4:
+	fprintf(stdout, " KEYBOARDUPDATE\n");
+			return KEYBOARDUPDATE;
+		break;
+
 	}
 	return EMPTY;
 
