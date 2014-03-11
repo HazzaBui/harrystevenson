@@ -28,6 +28,9 @@
 #include <netdb.h>
 #include <poll.h>
 
+//Include system access stuff
+#include "keyboardState.h"
+
 
 #define WIDTH 640
 #define HEIGHT 480
@@ -36,7 +39,7 @@
 #define TRANSMISSIONSIZE 484 //- 28 bytes ip/udp header 
 #define STREAMHEADEROFFSET 4
 #define LOOPTIMEMS 500
-#define FRAMESENDTIMER 500
+#define FRAMESENDTIMER 200
 
 //Signatures
 void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY);
@@ -71,6 +74,7 @@ int socketDesc;
 struct sockaddr_in returnSocketDesc;
 pollfd pfd;
 char* incomingBuffer;
+short incomingBufferLength;
 char* sendBuffer;
 unsigned int sendBufferLength;
 char* sendTypeBuffer;
@@ -118,12 +122,16 @@ fflush(stdout);
 				fprintf(stdout, "\nClose Connection Received\n");
 				loop = false;
 			break;
+			case NEWKEYSTATE:
+	//			fprintf(stdout, "\nNew state: %d ", incomingBufferLength);
+				changeState(incomingBuffer+3, incomingBufferLength - 3);
+			break;
 		}
 
 		//Send keyframe every time timer reaches send threshold
 		if(sleepTime > FRAMESENDTIMER)
 		{
-	//		fprintf(stdout, "\nSending keyframe");
+//			fprintf(stdout, "\nSend keyframe");
 			sendKeyframe();
 			sleepTime -= FRAMESENDTIMER;
 		}
@@ -136,7 +144,8 @@ fflush(stdout);
 		clock_gettime(CLOCK_MONOTONIC, &loopTimer);
 		timeElapsed = loopTimer.tv_nsec - timeElapsed;
 		timeElapsed = timeElapsed < 0 ? timeElapsed += 1000000000 : timeElapsed;
-		sleepTime += timeElapsed * 1000000;
+		sleepTime += timeElapsed / 1000000;
+//		fprintf(stdout, "\nAdding %d to sleep timer, value :%d ", timeElapsed / 1000000, sleepTime);
 
 //		sleepTime = LOOPTIMEMS - (timeElapsed / 1000000) > 0 ? LOOPTIMEMS - (timeElapsed / 1000000) : 0;
 	}
@@ -195,6 +204,7 @@ void initialiseVars()
 
 	//Network receive buffer
 	incomingBuffer = (char*)malloc(sizeof(char) * TRANSMISSIONSIZE);
+	incomingBufferLength = 0;
 	
 	//Add 2 initial bytes for UDP packet pos, then advance pointer 2
 	sendBuffer = (char*)malloc((sizeof(char)* WIDTH * HEIGHT * 3) + sizeof(char)*STREAMHEADEROFFSET);  
@@ -203,6 +213,8 @@ void initialiseVars()
 
 	sendTypeBuffer = (char*)malloc(sizeof(char)* 40);
 	sendTypeBufferLength = 40;
+
+	initialiseKeyboard();
 
 	fprintf(stdout, "\nFinished initialise");
 	fflush(stdout);
@@ -321,7 +333,7 @@ receiveType checkIncomingStream()
 	if(poll(&pfd, 1, 1) != 0)
 	{
 		int size = 	recv(socketDesc, incomingBuffer, TRANSMISSIONSIZE, 0);
-		fprintf(stdout, "\n\nData received: %d \n%s end\n\n", size, incomingBuffer);
+	//	fprintf(stdout, "\n\nData received: %d \n%s end\n\n", size, incomingBuffer);
 		fflush(stdout);
 
 //		char* msg = (char*)malloc(sizeof(char) * 7);
@@ -358,7 +370,7 @@ void parseArgs(int argc, char* argv[])
 
 receiveType translateReceiveType(char c)
 {
-	fprintf(stdout, "\nTranslating: %d ", c);
+//	fprintf(stdout, "\nTranslating: %d ", c);
 	switch(c)
 	{
 		case 0:
@@ -374,11 +386,13 @@ receiveType translateReceiveType(char c)
 			return EMPTY;
 		break;
 		case 3:
-	fprintf(stdout, " NEWKEYSTATE\n");
+			//Extract length and store in incomingBufferLength
+			memcpy(&incomingBufferLength, incomingBuffer+1, 2);
+//	fprintf(stdout, " NEWKEYSTATE\n");
 			return NEWKEYSTATE;
 		break;
 		case 4:
-	fprintf(stdout, " KEYBOARDUPDATE\n");
+//	fprintf(stdout, " KEYBOARDUPDATE\n");
 			return KEYBOARDUPDATE;
 		break;
 
@@ -421,7 +435,7 @@ void sendCharStream(char *stream, int32_t streamSize, char sendType)
 //	sprintf(datastream, "%d\0", numberOfTransmissions);
 	sendto(socketDesc, datastream, 15, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
 	
-//	fprintf(stdout, "\nSending %d chunks\nStreamsize: %d\nSleep timer: %d\n", numberOfTransmissions, streamSize, sleepTimer);
+	//fprintf(stdout, "\nSending %d chunks\nStreamsize: %d\nSleep timer: %d\n", numberOfTransmissions, streamSize, sleepTimer);
 
 
 	for(short int i = 0; i < numberOfTransmissions; i++)
