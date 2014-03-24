@@ -19,6 +19,7 @@ static struct input_events_custom valid_events[] = {
 	{UI_SET_KEYBIT,KEY_SPACE, 32},
 	{UI_SET_KEYBIT,KEY_TAB, 9},
 	{UI_SET_KEYBIT,KEY_SEMICOLON, 59},
+	{UI_SET_KEYBIT,KEY_ESC, 27},
 	{UI_SET_KEYBIT,KEY_A, 65},
 	{UI_SET_KEYBIT,KEY_B, 66},
 	{UI_SET_KEYBIT,KEY_C, 67},

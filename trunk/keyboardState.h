@@ -20,6 +20,6 @@ int uninitialise();
 
 //vars
 static struct uinput_tkn * keybd;
-static int numOfKeys = 33;
+static int numOfKeys = 34;
 
 #endif
