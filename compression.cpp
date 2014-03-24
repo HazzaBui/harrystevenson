@@ -39,7 +39,7 @@
 #define TRANSMISSIONSIZE 484 //- 28 bytes ip/udp header 
 #define STREAMHEADEROFFSET 4
 #define LOOPTIMEMS 500
-#define FRAMESENDTIMER 200
+#define FRAMESENDTIMER 350
 
 //Signatures
 void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY);
