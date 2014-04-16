@@ -6,6 +6,7 @@
 #include <string.h>
 #include <math.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <stdint.h>
 #include <time.h>
 
@@ -39,7 +40,7 @@
 #define TRANSMISSIONSIZE 484 //- 28 bytes ip/udp header 
 #define STREAMHEADEROFFSET 4
 #define LOOPTIMEMS 500
-#define FRAMESENDTIMER 350
+#define FRAMESENDTIMER 25
 
 //Signatures
 void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY);
@@ -49,6 +50,7 @@ void setupConnection();
 void sendKeyframe();
 receiveType checkIncomingStream();
 void initialiseVars();
+void cleanup();
 void parseArgs(int argc, char* argv[]);
 receiveType translateReceiveType(char c);
 void sendCharStream(char *stream, int32_t streamSize, char sendType);
@@ -63,6 +65,7 @@ moveVector** moveVecs;
 int numOfSamples;
 int vectorCount;
 streamHeader* sh;
+FILE *debuglog;
 
 //Network vars
 int portInt;
@@ -89,6 +92,7 @@ int main(int argc, char* argv[])
 	long sleepTime = 0;
 
 	fprintf(stdout, "\nStart");
+	fflush(stdout);
 	receiveType rt;
 	bool loop = true;
 	
@@ -103,6 +107,7 @@ fflush(stdout);
 
 	//Use 'loop' to maintain gameloop
 	//Perform all compression/communication here
+	fprintf(debuglog, "Entering Loop\n");
 	while(loop)
 	{
 		clock_gettime(CLOCK_MONOTONIC, &loopTimer);
@@ -148,13 +153,26 @@ fflush(stdout);
 //		fprintf(stdout, "\nAdding %d to sleep timer, value :%d ", timeElapsed / 1000000, sleepTime);
 
 //		sleepTime = LOOPTIMEMS - (timeElapsed / 1000000) > 0 ? LOOPTIMEMS - (timeElapsed / 1000000) : 0;
+
+		//flush log to ensure crash outs still record data
+		fflush(debuglog);
+
 	}
+	fprintf(debuglog, "Ending loop, closing down\n");
 	
 	//cleanup, run any post process, inform game application etc
+
+	cleanup();
 }
 
 void initialiseVars()
 {
+	debuglog = fopen("/var/log/fyp/debug.log", "w");
+	chown("/var/log/fyp/debug.log", 1000, 0);
+	chmod("/var/log/fyp/debug.log", S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
+	fprintf(debuglog, "Initialise Vars\n");
+	fflush(debuglog);
+	
 	fbfd = open("/dev/fb0", O_RDWR);
 	ioctl(fbfd, FBIOGET_FSCREENINFO, &sinfo);
 	long int framebuffersize = sinfo.smem_len;
@@ -220,6 +238,11 @@ void initialiseVars()
 	fflush(stdout);
 }
 
+void cleanup()
+{
+	fclose(debuglog);
+}
+
 void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY)
 {
 	vectorCount = 0;
@@ -250,6 +273,7 @@ void serialiseData()
 void setupConnection()
 {
 	fprintf(stdout, "\nUsing ip %d and port %d ", 0, portInt);
+	fprintf(debuglog, "Using port: %d\n", portInt);
 	//Create connection
 	//send stream header - sh*
 	int optval = 1;
@@ -272,9 +296,13 @@ void setupConnection()
 	fprintf(stdout, "\nBind result: %d \n", status);
 	fflush(stdout);
 
+	fprintf(debuglog, "Network bound\n");
+
 	socklen_t socklen = (socklen_t)sizeof(sockaddr);
 
 	recvfrom(socketDesc, incomingBuffer, TRANSMISSIONSIZE, 0, (sockaddr*)&returnSocketDesc, &socklen); 
+
+	fprintf(debuglog, "Client connected\n");
 
 	//Respond to ok the 'connection'
 	sendTypeBuffer[0] = (char)CONNECTOK;
@@ -289,6 +317,8 @@ void setupConnection()
 	
 //	fprintf(stdout, "\nClient connected: %s %s ", returnSocketDesc.sin_addr.s_addr, returnSocketDesc.sin_port);
 	fprintf(stdout, "\nClient connected ");
+
+	fprintf(debuglog, "Successfully returned\n");
 }
 
 
@@ -307,6 +337,9 @@ void sendKeyframe()
 	fprintf(stdout, "\nError: %d\nsize: %d ", error, &olen);
 */
 //fprintf(stdout, "\nSendKeyFrame");
+
+	fprintf(debuglog, "Image size: %d sendBufferLength: %d\n",  WIDTH * HEIGHT * 3, sendBufferLength);
+	fflush(debuglog);
 
 	unsigned int length = lzf_compress(curImage, WIDTH * HEIGHT * 3, sendBuffer, sendBufferLength); 
 
@@ -404,10 +437,13 @@ receiveType translateReceiveType(char c)
 
 void sendCharStream(char *stream, int32_t streamSize, char sendType)
 {
-	static unsigned char sendID = 0;
-	if(sendID == 254)
+	fprintf(debuglog, "Sending stream");
+
+	static unsigned char sendID = 255;
+	if(sendID == 255)
 		sendID = 0;
-	sendID++;
+	else
+		sendID++;
 
 //	fprintf(stdout, "\nSending stream\n");
 
@@ -453,4 +489,6 @@ void sendCharStream(char *stream, int32_t streamSize, char sendType)
 	}
 
 	free(datastream);
+
+	fprintf(debuglog, " Sent %d packets, %ld size sendID: %d\n", numberOfTransmissions, streamSize, sendID);
 }
