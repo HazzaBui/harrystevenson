@@ -10,9 +10,6 @@
 #include <stdint.h>
 #include <time.h>
 
-//#include <png.h>
-//#include "lodepng.h"
-//#include "lzfx.h"
 #include "lzfP.h"
 
 //Include graphics stuff
@@ -37,10 +34,12 @@
 #define HEIGHT 480
 #define SAMPLESIZEX 20
 #define SAMPLESIZEY 20
+#define SAMPLETHRESHOLD 5000
+#define SAMPLECHECKRANGE 10
 #define TRANSMISSIONSIZE 484 //- 28 bytes ip/udp header 
 #define STREAMHEADEROFFSET 4
 #define LOOPTIMEMS 500
-#define FRAMESENDTIMER 25
+#define FRAMESENDTIMER 600
 
 //Signatures
 void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY);
@@ -54,6 +53,7 @@ void cleanup();
 void parseArgs(int argc, char* argv[]);
 receiveType translateReceiveType(char c);
 void sendCharStream(char *stream, int32_t streamSize, char sendType);
+int vectorImageDiff();
 
 //Application vars
 int fbfd;
@@ -66,6 +66,7 @@ int numOfSamples;
 int vectorCount;
 streamHeader* sh;
 FILE *debuglog;
+long int framebuffersize;
 
 //Network vars
 int portInt;
@@ -100,7 +101,6 @@ int main(int argc, char* argv[])
 	initialiseVars();
 	setupConnection();
 
-//	sendKeyframe();
 
 	fprintf(stdout, "\nBeginning loop ");
 fflush(stdout);
@@ -128,7 +128,6 @@ fflush(stdout);
 				loop = false;
 			break;
 			case NEWKEYSTATE:
-	//			fprintf(stdout, "\nNew state: %d ", incomingBufferLength);
 				changeState(incomingBuffer+3, incomingBufferLength - 3);
 			break;
 		}
@@ -136,13 +135,13 @@ fflush(stdout);
 		//Send keyframe every time timer reaches send threshold
 		if(sleepTime > FRAMESENDTIMER)
 		{
-//			fprintf(stdout, "\nSend keyframe");
 			sendKeyframe();
 			sleepTime -= FRAMESENDTIMER;
 		}
 		else
 		{
 			//Else send p frame
+		//	vectorImageDiff();
 		}
 
 		//Update send timer
@@ -150,9 +149,6 @@ fflush(stdout);
 		timeElapsed = loopTimer.tv_nsec - timeElapsed;
 		timeElapsed = timeElapsed < 0 ? timeElapsed += 1000000000 : timeElapsed;
 		sleepTime += timeElapsed / 1000000;
-//		fprintf(stdout, "\nAdding %d to sleep timer, value :%d ", timeElapsed / 1000000, sleepTime);
-
-//		sleepTime = LOOPTIMEMS - (timeElapsed / 1000000) > 0 ? LOOPTIMEMS - (timeElapsed / 1000000) : 0;
 
 		//flush log to ensure crash outs still record data
 		fflush(debuglog);
@@ -175,41 +171,27 @@ void initialiseVars()
 	
 	fbfd = open("/dev/fb0", O_RDWR);
 	ioctl(fbfd, FBIOGET_FSCREENINFO, &sinfo);
-	long int framebuffersize = sinfo.smem_len;
+	framebuffersize = sinfo.smem_len;
 	fbp = (char*)mmap(0, framebuffersize, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
 
 
 	sh = new streamHeader(WIDTH, HEIGHT, SAMPLESIZEX, SAMPLESIZEY);
 
-	numOfSamples = (SAMPLESIZEX * SAMPLESIZEY) / 100;
+
+	numOfSamples = (WIDTH / SAMPLESIZEX) * (HEIGHT / SAMPLESIZEY);
 
 	fprintf(stdout, "\nInitial alloc");
+	fflush(stdout);
+
 	//allocate mem for current and previous image
 	prevImage = (char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
-//	curImage = (char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
-	curImage = fbp;
+	curImage = (char*)malloc(sizeof(char) * WIDTH * HEIGHT * 3);
+
+
+	memcpy(fbp, curImage, framebuffersize);
+
 	bool tempor = false;
-/*	
-	for(int i = 0; i < WIDTH * HEIGHT * 3; i++)
-	{
-		curImage[i] = fbp[i];
-//		curImage[i] = 128;
-		if(tempor == false && fbp[i] != 0)
-		{
-			fprintf(stdout, "\nnum:%d:pos:%d:", fbp[i], i);
-			tempor = true;
-		}
 
-	}
-*/
-
-	fprintf(stdout, "\nImage size: %d ", WIDTH * HEIGHT * 3);
-
-	//Create in shared memory only need current in shared, previous saved locally
-	//Should this be done in image capture?
-	//write pointer to file
-	//touch sem
-	
 	//Movement Vector list
 	moveVecs = new moveVector*[numOfSamples];
 	fprintf(stdout, "\nCreate %d move vectors");
@@ -243,26 +225,9 @@ void cleanup()
 	fclose(debuglog);
 }
 
-void createVectors(int start, int starty, int sampleSizeX, int sampleSizeY)
-{
-	vectorCount = 0;
-	//For each sample, check nearby image for movement approximation
-	for(int i = 0; i < numOfSamples; i++)
-	{
-
-
-		//If new vector, add at position VectorCount++
-	}
-}
-
-
-
-
 
 void serialiseData()
 {
-	//
-	//push numOfVectors to stream as 4 byte int
 	
 	for(int i = 0; i < vectorCount; i++)
 	{
@@ -315,7 +280,6 @@ void setupConnection()
 	
 	
 	
-//	fprintf(stdout, "\nClient connected: %s %s ", returnSocketDesc.sin_addr.s_addr, returnSocketDesc.sin_port);
 	fprintf(stdout, "\nClient connected ");
 
 	fprintf(debuglog, "Successfully returned\n");
@@ -324,19 +288,8 @@ void setupConnection()
 
 void sendKeyframe()
 {
-/*	//loseless compress and send full keyframe
-	//no vectors, delta etc
-	unsigned error = lodepng_encode32(&sendBuffer, &sendSize, curImage, WIDTH, HEIGHT);
-
-	fprintf(stdout, "\nImage size: %d ", sendSize);
-
-	char* obuf = (char*)malloc(sizeof(char)* WIDTH * HEIGHT * 3);
-	unsigned int* olen;
-	int error = lzfx_compress(curImage, WIDTH * HEIGHT * 3, obuf, olen); 
-	
-	fprintf(stdout, "\nError: %d\nsize: %d ", error, &olen);
-*/
-//fprintf(stdout, "\nSendKeyFrame");
+	memcpy(curImage, prevImage, framebuffersize);
+	memcpy(fbp, curImage, framebuffersize);
 
 	fprintf(debuglog, "Image size: %d sendBufferLength: %d\n",  WIDTH * HEIGHT * 3, sendBufferLength);
 	fflush(debuglog);
@@ -345,17 +298,9 @@ void sendKeyframe()
 
 	if(length > 0)
 	{
-//		sendTypeBuffer[0] = (char)KEYFRAME;
-//		sprintf(sendTypeBuffer, "%d%d%d%c", (char)HEADER, (char)KEYFRAME, length, '\0');
-//		fprintf(stdout, "\nSending header: %s", sendTypeBuffer);
-//		sendto(socketDesc, sendTypeBuffer, sendTypeBufferLength, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
-//		fprintf(stdout, "\nSending stream, size: %d\n", length);
 		sendCharStream(sendBuffer, length, (char)KEYFRAME);
-//		sendto(socketDesc, sendBuffer, length, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
-//		fprintf(stdout, "\nSent stream ");
 	}
 
-//	fprintf(stdout, "\nError: %d\nsize: %d ", length, sendBufferLength);
 }
 
 //Check the stream for connection close, resend etc
@@ -366,16 +311,8 @@ receiveType checkIncomingStream()
 	if(poll(&pfd, 1, 1) != 0)
 	{
 		int size = 	recv(socketDesc, incomingBuffer, TRANSMISSIONSIZE, 0);
-	//	fprintf(stdout, "\n\nData received: %d \n%s end\n\n", size, incomingBuffer);
 		fflush(stdout);
 
-//		char* msg = (char*)malloc(sizeof(char) * 7);
-//		sprintf(msg, "Return message");	
-//		int len = strlen(msg);
-//		sendto(socketDesc, msg, len, 0, returnSocketDesc, sizeof(SOCKADDR_IN));
-		//sendto(socketDesc, msg, len, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
-//fprintf(stdout, "\nSend msg: %s ", msg);
-//fflush(stdout);
 		if(size > 0)
 		{
 			rt = translateReceiveType(incomingBuffer[0]);	
@@ -403,7 +340,6 @@ void parseArgs(int argc, char* argv[])
 
 receiveType translateReceiveType(char c)
 {
-//	fprintf(stdout, "\nTranslating: %d ", c);
 	switch(c)
 	{
 		case 0:
@@ -421,11 +357,9 @@ receiveType translateReceiveType(char c)
 		case 3:
 			//Extract length and store in incomingBufferLength
 			memcpy(&incomingBufferLength, incomingBuffer+1, 2);
-//	fprintf(stdout, " NEWKEYSTATE\n");
 			return NEWKEYSTATE;
 		break;
 		case 4:
-//	fprintf(stdout, " KEYBOARDUPDATE\n");
 			return KEYBOARDUPDATE;
 		break;
 
@@ -445,8 +379,6 @@ void sendCharStream(char *stream, int32_t streamSize, char sendType)
 	else
 		sendID++;
 
-//	fprintf(stdout, "\nSending stream\n");
-
 	float numOfTransF = (float)streamSize / (float)(TRANSMISSIONSIZE - 2); // include frame order
 	unsigned int numberOfTransmissions = (int)ceil(numOfTransF);
 
@@ -457,7 +389,6 @@ void sendCharStream(char *stream, int32_t streamSize, char sendType)
 	int sleepTimer = 25000 / numberOfTransmissions; //25ms split for each transmission	
 
 	char *datastream = (char*)malloc(sizeof(char)*15);
-	//sprintf(datastream, "%d%d%d%d%c", (char)HEADER, (char)KEYFRAME, sendID, (uint32_t)streamSize, '\0');
 
 	char header = (char)HEADER;
 	memcpy(datastream, &header, sizeof(char));
@@ -465,20 +396,12 @@ void sendCharStream(char *stream, int32_t streamSize, char sendType)
 	memcpy(datastream+2, &sendID, sizeof(char));
 	memcpy(datastream+3, &streamSize, sizeof(uint32_t));
 
-
-//	memcpy(streampospoint+1, &sendID, sizeof(char));
-//	memcpy(streampospoint+2, &i, sizeof(short int));
-//	sprintf(datastream, "%d\0", numberOfTransmissions);
 	sendto(socketDesc, datastream, 15, 0, (sockaddr*)&returnSocketDesc, sizeof(sockaddr_in));
 	
-	//fprintf(stdout, "\nSending %d chunks\nStreamsize: %d\nSleep timer: %d\n", numberOfTransmissions, streamSize, sleepTimer);
 
 
 	for(short int i = 0; i < numberOfTransmissions; i++)
 	{
-//		usleep(sleepTimer);
-//		usleep(1000);
-		
 		memcpy(streampospoint, &sendType, sizeof(char));
 		memcpy(streampospoint+1, &sendID, sizeof(char));
 		memcpy(streampospoint+2, &i, sizeof(short int));
@@ -491,4 +414,105 @@ void sendCharStream(char *stream, int32_t streamSize, char sendType)
 	free(datastream);
 
 	fprintf(debuglog, " Sent %d packets, %ld size sendID: %d\n", numberOfTransmissions, streamSize, sendID);
+}
+
+
+
+int vectorImageDiff()
+{
+	vectorCount = 0;
+	numOfSamples = (WIDTH / SAMPLESIZEX) * (HEIGHT / SAMPLESIZEY);	
+	int numberOfSampleChecks = ((SAMPLECHECKRANGE * 2) * (SAMPLECHECKRANGE * 2));
+
+	fprintf(debuglog, "Sending P Frame!!!\n");
+
+	//int value for each vector move X and Y
+	int* sampleDiff = (int*)malloc(sizeof(int) * numberOfSampleChecks);
+
+	int numOfSamples = ((SAMPLECHECKRANGE * 2) * (SAMPLECHECKRANGE * 2));
+	for(int i = 0; i < numberOfSampleChecks; i++)
+	{
+			sampleDiff[i] = 0;
+	}
+	int diffPos;
+
+
+	int curPixel = 0;
+	for(int i = 0; i < WIDTH * HEIGHT; i++)
+	{
+		//per pixel
+		//Add check to remove bottom/top sample taking
+		diffPos = 0;
+		for(int x = -SAMPLECHECKRANGE; x < SAMPLECHECKRANGE; x++)
+		{
+			for(int y = -SAMPLECHECKRANGE; y < SAMPLECHECKRANGE; y++)
+			{
+				int checkPos = curPixel + (y*3) + (x * HEIGHT * 3);
+				//Add additional out of bounds checks for intermediate north/south wraparounds
+				if((checkPos < (WIDTH * HEIGHT * 3))&&
+					(checkPos >= 0))
+				{							
+					sampleDiff[diffPos] += abs(curImage[curPixel] - prevImage[checkPos]);
+					sampleDiff[diffPos] += abs(curImage[curPixel+1] - prevImage[checkPos+1]);
+					sampleDiff[diffPos] += abs(curImage[curPixel+2] - prevImage[checkPos+2]);
+				}
+				else
+				{
+					sampleDiff[diffPos] += SAMPLECHECKRANGE;
+				}
+				diffPos++;
+			}
+		}
+
+		//assumption that framebuffer reads bottom to top, then left to right
+
+		//check if one full sample completed
+		if(i % (SAMPLESIZEX * SAMPLESIZEY) == 0)
+		{
+			int lowestSample = 0;
+			for(int j = 1; j < numberOfSampleChecks; j++)
+			{
+				if(sampleDiff[j] < sampleDiff[lowestSample])
+					lowestSample = j;
+			}
+
+			if(sampleDiff[lowestSample] < SAMPLETHRESHOLD)
+			{
+				//Am I being stupid here with X vs Y division?
+				//Add vector
+				int vecMoveX = (int)floor(lowestSample / SAMPLESIZEX) - (SAMPLESIZEX / 2);
+				int vecMoveY = (int)lowestSample % SAMPLESIZEY - (SAMPLESIZEY / 2);
+
+				int vecPosX = (int)(floor(i / HEIGHT));
+				int vecPosY = (int)(i % WIDTH);
+
+				moveVecs[vectorCount]->moveX = vecMoveX;				
+				moveVecs[vectorCount]->moveY = vecMoveY;
+
+				moveVecs[vectorCount]->x = vecPosX;
+				moveVecs[vectorCount]->y = vecPosY;
+
+				vectorCount++;
+			}
+
+			//Add vector, clear vars
+			for(int j = 0; j < numberOfSampleChecks; j++)
+				sampleDiff[j] = 0;
+
+			//set curPixel to beginning of next sample
+			//still to do
+			//
+			//
+			//
+
+		}
+		//Advance curPixel 1 row right and sample starting height
+		if((i + 1) % SAMPLESIZEY == 0)
+				curPixel += (HEIGHT - SAMPLESIZEY) * 3;
+
+		curPixel += 3;
+	}
+	fprintf(debuglog, "Done\n");
+	
+	return vectorCount;
 }
